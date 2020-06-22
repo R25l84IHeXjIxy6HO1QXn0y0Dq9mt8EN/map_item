@@ -1,1 +1,1 @@
-Makes all struct fields optional (c.f. `Partial<T>` in TypeScript).
+Apply modifiers over struct fields.
