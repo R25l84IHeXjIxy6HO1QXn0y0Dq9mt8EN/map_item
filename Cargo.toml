@@ -1,5 +1,5 @@
 [package]
-name = "map_struct"
+name = "map_item"
 version = "0.1.0"
 authors = ["R25l84IHeXjIxy6HO1QXn0y0Dq9mt8EN <67037013+R25l84IHeXjIxy6HO1QXn0y0Dq9mt8EN@users.noreply.github.com>"]
 edition = "2018"

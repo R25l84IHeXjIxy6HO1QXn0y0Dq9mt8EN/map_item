@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse2, Attribute, Field, Item, ItemStruct, Result, Token, Type};
+use syn::{parse2, Attribute, DeriveInput, Field, Item, Result, Token, Type};
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -61,7 +61,7 @@ impl Parse for MacroArguments {
 
 #[proc_macro_attribute]
 pub fn map(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let ast: ItemStruct = parse2(item.into())
+    let ast: DeriveInput = parse2(item.into())
         .unwrap();
     let out = parse2::<MacroArguments>(attr.into())
         .unwrap()
