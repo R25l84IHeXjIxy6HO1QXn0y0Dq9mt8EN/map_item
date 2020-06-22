@@ -1,70 +1,71 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse2, parse_macro_input, parse_str, Attribute, Field, Ident, ItemStruct, Result, Type};
+use syn::{parse2, Attribute, Field, Item, ItemStruct, Result, Token, Type};
 use syn::fold::Fold;
 use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
 
-struct Flag(bool);
-struct OptionalFields;
-#[derive(Default)]
-struct SerdeSkip {
-    attrs: Vec<Attribute>
+#[derive(Debug)]
+enum MapStruct {
+    TypeArg(Type),
+    AttrArgs(Vec<Attribute>)
 }
 
-impl SerdeSkip {
-    fn new() -> Self {
-        Default::default()
-    }
-}
+#[derive(Debug)]
+struct MacroArguments(Vec<MapStruct>);
 
-impl Fold for OptionalFields {
-    fn fold_type(&mut self, node: Type) -> Type {
-        parse2(quote! { Option<#node> })
-            .unwrap()
-    }
-}
-
-impl Fold for SerdeSkip {
+impl Fold for MapStruct {
     fn fold_field(&mut self, node: Field) -> Field {
         let mut new_node = node.clone();
-        let serde_hint: Vec<Attribute> = parse_str::<SerdeSkip>(r#"#[serde(skip_serializing_if = "Option::is_none")]"#)
-            .unwrap()
-            .attrs;
-        new_node.attrs
-            .extend(serde_hint);
+        match self {
+            MapStruct::AttrArgs(attr) => {
+                new_node.attrs.extend(attr.clone());
+            }
+            MapStruct::TypeArg(ty) => {
+                let old_ty = node.ty;
+                new_node.ty = parse2::<Type>(quote! { #ty<#old_ty> }).unwrap();
+            }
+        }
         new_node
     }
 }
 
-impl Parse for Flag {
-    fn parse(input: ParseStream) -> Result<Self> {
-        let flag = match input.parse::<Ident>() {
-            Ok(s) if s.to_string() == "compact" => Flag(true),
-            _ => Flag(false)
-        };
-        Ok(flag)
+impl Fold for MacroArguments {
+    fn fold_item(&mut self, node: Item) -> Item {
+        self.0
+            .iter_mut()
+            .fold(node, |acc, x| x.fold_item(acc))
+            .into()
     }
 }
 
-impl Parse for SerdeSkip {
+impl Parse for MapStruct {
     fn parse(input: ParseStream) -> Result<Self> {
-        Ok(SerdeSkip {
-            attrs: input.call(Attribute::parse_outer)?
-        })
+        let lookahead = input.lookahead1();
+        if lookahead.peek(Token![#]) {
+            Ok(MapStruct::AttrArgs(input.call(Attribute::parse_outer)?))
+        }
+        else {
+            Ok(MapStruct::TypeArg(input.parse::<Type>()?))
+        }
+    }
+}
+
+impl Parse for MacroArguments {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Ok(MacroArguments(<Punctuated<MapStruct, Token![,]>>::parse_terminated(input)?
+            .into_iter()
+            .collect()))
     }
 }
 
 #[proc_macro_attribute]
-pub fn anyof(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn map(attr: TokenStream, item: TokenStream) -> TokenStream {
     let ast: ItemStruct = parse2(item.into())
         .unwrap();
-    let flag = parse_macro_input!(attr as Flag);
-
-    let mut out = OptionalFields.fold_item(ast.into());
-
-    if flag.0 {
-        out = SerdeSkip::new().fold_item(out);
-    }
+    let out = parse2::<MacroArguments>(attr.into())
+        .unwrap()
+        .fold_item(ast.into());
 
     (quote! { #out }).into()
 }
