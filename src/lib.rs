@@ -1,52 +1,70 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{token, Data, DeriveInput, Fields};
+use syn::{parse2, parse_macro_input, parse_str, Attribute, Field, Ident, ItemStruct, Result, Type};
+use syn::fold::Fold;
+use syn::parse::{Parse, ParseStream};
 
-macro_rules! quote_flat {
-    ($x: expr) => {
-        {
-            $x
-                .iter()
-                .fold(quote! { }, |xs, x| {
-                    quote!{ #xs #x }
-                })
-        }
-    };
+struct Flag(bool);
+struct OptionalFields;
+#[derive(Default)]
+struct SerdeSkip {
+    attrs: Vec<Attribute>
+}
+
+impl SerdeSkip {
+    fn new() -> Self {
+        Default::default()
+    }
+}
+
+impl Fold for OptionalFields {
+    fn fold_type(&mut self, node: Type) -> Type {
+        parse2(quote! { Option<#node> })
+            .unwrap()
+    }
+}
+
+impl Fold for SerdeSkip {
+    fn fold_field(&mut self, node: Field) -> Field {
+        let mut new_node = node.clone();
+        let serde_hint: Vec<Attribute> = parse_str::<SerdeSkip>(r#"#[serde(skip_serializing_if = "Option::is_none")]"#)
+            .unwrap()
+            .attrs;
+        new_node.attrs
+            .extend(serde_hint);
+        new_node
+    }
+}
+
+impl Parse for Flag {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let flag = match input.parse::<Ident>() {
+            Ok(s) if s.to_string() == "compact" => Flag(true),
+            _ => Flag(false)
+        };
+        Ok(flag)
+    }
+}
+
+impl Parse for SerdeSkip {
+    fn parse(input: ParseStream) -> Result<Self> {
+        Ok(SerdeSkip {
+            attrs: input.call(Attribute::parse_outer)?
+        })
+    }
 }
 
 #[proc_macro_attribute]
-pub fn anyof(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let ast: DeriveInput = syn::parse(item).unwrap();
+pub fn anyof(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let ast: ItemStruct = parse2(item.into())
+        .unwrap();
+    let flag = parse_macro_input!(attr as Flag);
 
-    let attrs = quote_flat![&ast.attrs];
-    let vis = ast.vis;
-    let ident = ast.ident;
-    let generics = ast.generics;
+    let mut out = OptionalFields.fold_item(ast.into());
 
-    match ast.data {
-        Data::Struct(s) => {
-            let token = s.struct_token;
-            let fields = s.fields
-                .iter()
-                .map(|x| {
-                    let attrs = quote_flat![&x.attrs];
-                    let vis = &x.vis;
-                    let ident = &x.ident;
-                    let colon_token = &x.colon_token;
-                    let ty = &x.ty;
+    if flag.0 {
+        out = SerdeSkip::new().fold_item(out);
+    }
 
-                    quote! {
-                        #attrs #vis #ident #colon_token Option<#ty>,
-                    }
-                })
-                .fold(quote! { }, |xs, x| {
-                    quote! { #xs #x }
-                });
-            let semi = s.semi_token;
-            quote! {
-                #attrs #vis #token #ident #generics (#fields) #semi
-            }
-        }
-        _ => panic!("#[anyof] only valid for structs")
-    }.into()
+    (quote! { #out }).into()
 }
